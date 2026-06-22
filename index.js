@@ -31,7 +31,22 @@ app.get("/categories", (req, res) => {
 });
 
 app.post("/ajout-image", (req, res) => {
+  // categories.forEach(categorie => {
+  //   categorie.forEach((urlImage) => {
+  //     //traitement
+  //   });
+  // })
 
+  //on vérifie qu'il n'y a pas d'URL identique dans le tableau
+  for (let categorie of categories) {
+    for (let urlImage of categorie.images) {
+      //est ce que l'url envoyée est identique à l'url que l'on est en train de parcourir
+      if (urlImage === req.body.urlImage) {
+        //on met fin à la fonction en renvoyent un code CONFLIT
+        return res.status(409).send();
+      }
+    }
+  }
 
   categories[req.body.indexCategorie].images.push(req.body.urlImage);
 
@@ -39,12 +54,34 @@ app.post("/ajout-image", (req, res) => {
 });
 
 app.post("/supprimer-image", (req, res) => {
-
   categories[req.body.indexCategorie].images.splice(req.body.indexImage, 1);
 
   res.status(200).send();
 });
 
-app.listen(3000, () =>
-  console.log("Le serveur est démarré sur le port 3000 !!!!!!"),
+app.patch("/deplacement-image", (req, res) => {
+  const indexCategorie = req.body.indexCategorie;
+  const indexImage = req.body.indexImage;
+  const haut = req.body.haut;
+
+  const nouvelIndexCategorie = indexCategorie + (haut ? -1 : 1);
+
+  //l'mage va etre deplacer dans une categorie inexistante 
+  // (note : cela ne devrait pas arriver si l'utilisateur passe par notre application, 
+  // mais il pourrait passer directement pas l'api : 
+  // ce qui est une erreur qu'on ne traitera pas coté front)
+  if(nouvelIndexCategorie < 0 || nouvelIndexCategorie >= categories.length) {
+    return res.status(400).send();
+  }
+
+  const urlImage = categories[indexCategorie].images[indexImage];
+  categories[nouvelIndexCategorie].images.push(urlImage);
+  //on supprime l'image originale
+  categories[indexCategorie].images.splice(indexImage, 1);
+
+  res.status(200).send();
+});
+
+app.listen(7777, () =>
+  console.log("Le serveur est démarré sur le port 7777 !!!!!!"),
 );
