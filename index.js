@@ -1,10 +1,29 @@
 const express = require("express");
 const cors = require("cors");
-
 const app = express();
+const mysql = require("mysql2");
+const crypto = require("crypto");
+const jwtUtils = require("jsonwebtoken");
 
 app.use(cors());
 app.use(express.json());
+
+// Configuration de la base de données
+const connection = mysql.createConnection({
+  host: "localhost",
+  user: "root",
+  password: "root",
+  database: "tier_list",
+});
+
+// Connexion à la base de données
+connection.connect((err) => {
+  if (err) {
+    console.error("Erreur de connexion à la base de données :", err);
+    return;
+  }
+  console.log("Connecté à la base de données MySQL");
+});
 
 const categories = [
   {
@@ -26,13 +45,82 @@ const categories = [
   },
 ];
 
+app.post("/login", (req, res) => {
+  console.log(req.body.email, req.body.password);
+
+  connection.query(
+    "SELECT * FROM user WHERE email = ? AND password = ?",
+    [req.body.email, req.body.password],
+    (erreur, resultat) => {
+      //ne devrait pas arriver,
+      // a moins d'une erreur de syntaxe dans la requete,
+      // ou si la bdd est down
+      if (erreur) {
+        return res.status(500).send();
+      }
+
+      //l'utilisateur s'est trompé de email / mdp
+      if (resultat.length === 0) {
+        return res.status(401).send();
+      }
+
+      const user = resultat[0];
+
+      const jwt = jwtUtils.sign({ sub: req.body.email }, "mon-super-secret");
+
+      res.send(jwt);
+
+      //generation "a la main" d'un jwt
+      // const header = {
+      //   typ: "JWT",
+      //   alg: "HS256",
+      // };
+
+      // const body = {
+      //   sub: req.body.email,
+      // };
+
+      // const base64Header = Buffer.from(JSON.stringify(header)).toString(
+      //   "base64url",
+      // );
+      // const base64Body = Buffer.from(JSON.stringify(body)).toString(
+      //   "base64url",
+      // );
+
+      // const signature = crypto
+      //   .createHmac("sha256", "mon-super-secret")
+      //   .update(base64Header + "." + base64Body)
+      //   .digest("base64url");
+
+      // console.log(base64Header + "." + base64Body + "." + signature);
+    },
+  );
+});
+
 app.get("/categories", (req, res) => {
-  res.json(categories);
+  const token = req.headers["authorization"];
+  const jwt = token.substring(7);
+
+  jwtUtils.verify(jwt, "mon-super-secret", (erreur, body) => {
+    if (erreur) {
+      return res.status(403).send();
+    }
+
+    //TODO : a remplacer par la requette : 
+    // SELECT categorie_id, c.nom, i.id AS image_id, url
+    // FROM user u 
+    // JOIN categorie c ON u.id = c.user_id
+    // JOIN image i ON c.id = i.categorie_id;
+
+    res.json(categories);
+
+  });
+
 });
 
 app.post("/ajout-image", (req, res) => {
   // categories.forEach(categorie => {
-  //   categorie.forEach((urlImage) => {
+  //   categorie.forEach((urlImage) =>{} {
   //     //traitement
   //   });
   // })
@@ -66,11 +154,11 @@ app.patch("/deplacement-image", (req, res) => {
 
   const nouvelIndexCategorie = indexCategorie + (haut ? -1 : 1);
 
-  //l'mage va etre deplacer dans une categorie inexistante 
-  // (note : cela ne devrait pas arriver si l'utilisateur passe par notre application, 
-  // mais il pourrait passer directement pas l'api : 
+  //l'mage va etre deplacer dans une categorie inexistante
+  // (note : cela ne devrait pas arriver si l'utilisateur passe par notre application,
+  // mais il pourrait passer directement pas l'api :
   // ce qui est une erreur qu'on ne traitera pas coté front)
-  if(nouvelIndexCategorie < 0 || nouvelIndexCategorie >= categories.length) {
+  if (nouvelIndexCategorie < 0 || nouvelIndexCategorie >= categories.length) {
     return res.status(400).send();
   }
 
