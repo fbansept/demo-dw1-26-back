@@ -1,29 +1,16 @@
 const express = require("express");
 const cors = require("cors");
 const app = express();
-const mysql = require("mysql2");
+
 const crypto = require("crypto");
 const jwtUtils = require("jsonwebtoken");
 
+const jwtInterceptor = require("./jwt-interceptor"); //import de notre middleware
+const connection = require("./connection");
+const imageOwnerInterceptor = require("./image-owner-interceptor");
+
 app.use(cors());
 app.use(express.json());
-
-// Configuration de la base de données
-const connection = mysql.createConnection({
-  host: "localhost",
-  user: "root",
-  password: "root",
-  database: "tier_list",
-});
-
-// Connexion à la base de données
-connection.connect((err) => {
-  if (err) {
-    console.error("Erreur de connexion à la base de données :", err);
-    return;
-  }
-  console.log("Connecté à la base de données MySQL");
-});
 
 const categories = [
   {
@@ -97,25 +84,63 @@ app.post("/login", (req, res) => {
   );
 });
 
-app.get("/categories", (req, res) => {
-  const token = req.headers["authorization"];
-  const jwt = token.substring(7);
+app.get("/categories", [jwtInterceptor], (req, res) => {
+  //on recupere toutes les catégories de l'utilisateur connecté
+  //cad les catégories dont le user_id est égale à l'id de l'utilisateur
+  //dont l'email est celui stocké à la propriété sub du JWT
+  connection.query(
+    `SELECT c.id AS categorie_id, c.nom, i.id AS image_id, url
+            FROM user u 
+            JOIN categorie c ON u.id = c.user_id
+            LEFT JOIN image i ON c.id = i.categorie_id
+            WHERE u.id = ?`,
+    [req.user.id],
+    (erreur, resultat) => {
+      //ne devrait pas arriver,
+      // a moins d'une erreur de syntaxe dans la requete,
+      // ou si la bdd est down
+      if (erreur) {
+        return res.status(500).send();
+      }
 
-  jwtUtils.verify(jwt, "mon-super-secret", (erreur, body) => {
-    if (erreur) {
-      return res.status(403).send();
-    }
+      groupeCategorie = [];
 
-    //TODO : a remplacer par la requette : 
-    // SELECT categorie_id, c.nom, i.id AS image_id, url
-    // FROM user u 
-    // JOIN categorie c ON u.id = c.user_id
-    // JOIN image i ON c.id = i.categorie_id;
+      for (let ligne of resultat) {
+        //si c'est la première fois que l'on tombe sur cette catégorie, on créait un nouvel objet catégorie
+        //note : equivalent en PHP de la methode "isset"
+        if (typeof groupeCategorie[ligne.categorie_id] === "undefined") {
+          console.log("nouvelle categorie");
 
-    res.json(categories);
+          groupeCategorie[ligne.categorie_id] = {
+            id: ligne.categorie_id,
+            titre: ligne.nom,
+            images: [],
+          };
+        }
 
-  });
+        //si il y a une image dans cette ligne on l'ajoute a la catégorie
 
+        console.log(ligne.image_id);
+
+        if (ligne.image_id) {
+          console.log(ligne.categorie_id);
+
+          groupeCategorie[ligne.categorie_id].images.push({
+            id: ligne.image_id,
+            url: ligne.url,
+          });
+        }
+      }
+
+      //on supprime les categories null
+      // (comme on s'est basé sur l'index du pour filtrer :
+      // ajouter un categorie à l'index 500, aura créé des index vide de 0 à 499)
+
+      const categories = groupeCategorie.filter((item) => item != null);
+
+      res.json(categories);
+    },
+  );
 });
 
 app.post("/ajout-image", (req, res) => {
@@ -141,34 +166,80 @@ app.post("/ajout-image", (req, res) => {
   res.status(201).send();
 });
 
-app.post("/supprimer-image", (req, res) => {
-  categories[req.body.indexCategorie].images.splice(req.body.indexImage, 1);
+app.delete(
+  "/supprimer-image/:id",
+  [jwtInterceptor, imageOwnerInterceptor],
+  (req, res) => {
+    connection.query(
+      `DELETE FROM image i WHERE i.id = ?`,
+      [req.idImage],
+      (erreur, resultat) => {
+        //ne devrait pas arriver,
+        // a moins d'une erreur de syntaxe dans la requete,
+        // ou si la bdd est down
+        if (erreur) {
+          return res.status(500).send();
+        }
 
-  res.status(200).send();
-});
+        res.status(204).send();
+      },
+    );
+  },
+);
 
-app.patch("/deplacement-image", (req, res) => {
-  const indexCategorie = req.body.indexCategorie;
-  const indexImage = req.body.indexImage;
-  const haut = req.body.haut;
+app.patch(
+  "/deplacement-image/:id",
+  [jwtInterceptor, imageOwnerInterceptor],
+  (req, res) => {
+    // const indexCategorie = req.body.indexCategorie;
+    // const indexImage = req.body.indexImage;
 
-  const nouvelIndexCategorie = indexCategorie + (haut ? -1 : 1);
+    const idImage = parseInt(req.params.id, 10);
 
-  //l'mage va etre deplacer dans une categorie inexistante
-  // (note : cela ne devrait pas arriver si l'utilisateur passe par notre application,
-  // mais il pourrait passer directement pas l'api :
-  // ce qui est une erreur qu'on ne traitera pas coté front)
-  if (nouvelIndexCategorie < 0 || nouvelIndexCategorie >= categories.length) {
-    return res.status(400).send();
-  }
+    //on verifie que le parametre est bien un nombre
+    if (isNaN(idImage)) {
+      return res.status(400).send();
+    }
 
-  const urlImage = categories[indexCategorie].images[indexImage];
-  categories[nouvelIndexCategorie].images.push(urlImage);
-  //on supprime l'image originale
-  categories[indexCategorie].images.splice(indexImage, 1);
+    const haut = req.body.haut;
 
-  res.status(200).send();
-});
+    //TODO recupere toutes les categorie de l'utilisateur ordonnée par id croissant
+
+    const nouvelIdCategorie = 42;
+
+    connection.query(
+      `UPDATE image i SET categorie_id = ? WHERE i.id = ?`,
+      [nouvelIdCategorie, idImage],
+      (erreur, resultat) => {
+        //ne devrait pas arriver,
+        // a moins d'une erreur de syntaxe dans la requete,
+        // ou si la bdd est down
+        if (erreur) {
+          return res.status(500).send();
+        }
+
+        res.status(204).send();
+      },
+    );
+
+    // const nouvelIndexCategorie = indexCategorie + (haut ? -1 : 1);
+
+    // //l'mage va etre deplacer dans une categorie inexistante
+    // // (note : cela ne devrait pas arriver si l'utilisateur passe par notre application,
+    // // mais il pourrait passer directement pas l'api :
+    // // ce qui est une erreur qu'on ne traitera pas coté front)
+    // if (nouvelIndexCategorie < 0 || nouvelIndexCategorie >= categories.length) {
+    //   return res.status(400).send();
+    // }
+
+    // const urlImage = categories[indexCategorie].images[indexImage];
+    // categories[nouvelIndexCategorie].images.push(urlImage);
+    // //on supprime l'image originale
+    // categories[indexCategorie].images.splice(indexImage, 1);
+
+    //res.status(200).send();
+  },
+);
 
 app.listen(7777, () =>
   console.log("Le serveur est démarré sur le port 7777 !!!!!!"),
