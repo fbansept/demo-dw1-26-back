@@ -8,6 +8,7 @@ const jwtUtils = require("jsonwebtoken");
 const jwtInterceptor = require("./jwt-interceptor"); //import de notre middleware
 const connection = require("./connection");
 const imageOwnerInterceptor = require("./image-owner-interceptor");
+const { log } = require("console");
 
 app.use(cors());
 app.use(express.json());
@@ -33,7 +34,6 @@ const categories = [
 ];
 
 app.post("/login", (req, res) => {
-  console.log(req.body.email, req.body.password);
 
   connection.query(
     "SELECT * FROM user WHERE email = ? AND password = ?",
@@ -43,6 +43,7 @@ app.post("/login", (req, res) => {
       // a moins d'une erreur de syntaxe dans la requete,
       // ou si la bdd est down
       if (erreur) {
+        console.log(erreur);
         return res.status(500).send();
       }
 
@@ -100,6 +101,7 @@ app.get("/categories", [jwtInterceptor], (req, res) => {
       // a moins d'une erreur de syntaxe dans la requete,
       // ou si la bdd est down
       if (erreur) {
+        console.log(erreur);
         return res.status(500).send();
       }
 
@@ -109,8 +111,7 @@ app.get("/categories", [jwtInterceptor], (req, res) => {
         //si c'est la première fois que l'on tombe sur cette catégorie, on créait un nouvel objet catégorie
         //note : equivalent en PHP de la methode "isset"
         if (typeof groupeCategorie[ligne.categorie_id] === "undefined") {
-          console.log("nouvelle categorie");
-
+    
           groupeCategorie[ligne.categorie_id] = {
             id: ligne.categorie_id,
             titre: ligne.nom,
@@ -119,12 +120,9 @@ app.get("/categories", [jwtInterceptor], (req, res) => {
         }
 
         //si il y a une image dans cette ligne on l'ajoute a la catégorie
-
-        console.log(ligne.image_id);
-
+  
         if (ligne.image_id) {
-          console.log(ligne.categorie_id);
-
+    
           groupeCategorie[ligne.categorie_id].images.push({
             id: ligne.image_id,
             url: ligne.url,
@@ -178,6 +176,7 @@ app.delete(
         // a moins d'une erreur de syntaxe dans la requete,
         // ou si la bdd est down
         if (erreur) {
+          console.log(erreur);
           return res.status(500).send();
         }
 
@@ -191,34 +190,48 @@ app.patch(
   "/deplacement-image/:id",
   [jwtInterceptor, imageOwnerInterceptor],
   (req, res) => {
-    // const indexCategorie = req.body.indexCategorie;
-    // const indexImage = req.body.indexImage;
-
-    const idImage = parseInt(req.params.id, 10);
-
-    //on verifie que le parametre est bien un nombre
-    if (isNaN(idImage)) {
-      return res.status(400).send();
-    }
 
     const haut = req.body.haut;
 
-    //TODO recupere toutes les categorie de l'utilisateur ordonnée par id croissant
-
-    const nouvelIdCategorie = 42;
-
+    //On recupere toutes les categorie de l'utilisateur ordonnée par id croissant
     connection.query(
-      `UPDATE image i SET categorie_id = ? WHERE i.id = ?`,
-      [nouvelIdCategorie, idImage],
-      (erreur, resultat) => {
-        //ne devrait pas arriver,
-        // a moins d'une erreur de syntaxe dans la requete,
-        // ou si la bdd est down
+      `SELECT id FROM categorie WHERE user_id = ? ORDER BY id`,
+      [req.user.id],
+      (erreur, listeCategorie) => {
         if (erreur) {
+          console.log(erreur);
           return res.status(500).send();
         }
 
-        res.status(204).send();
+        //on recupere l'index de la catégorie de l'image dans la liste.
+        const indexActuel = listeCategorie.findIndex(
+          (cat) => cat.id === req.idCategorie,
+        );
+        const nouvelIndex = indexActuel + (haut ? -1 : 1);
+
+        //on verfie que le nouvel index est bien un index du tableau
+        if (nouvelIndex < 0 || nouvelIndex >= listeCategorie.length) {
+          return res.status(400).send();
+        }
+
+        //on recupere l'id de la nouvelle catégorie de l'image
+        const nouvelIdCategorie = listeCategorie[nouvelIndex].id;
+
+        connection.query(
+          `UPDATE image i SET categorie_id = ? WHERE i.id = ?`,
+          [nouvelIdCategorie, req.idImage],
+          (erreur, resultat) => {
+            //ne devrait pas arriver,
+            // a moins d'une erreur de syntaxe dans la requete,
+            // ou si la bdd est down
+            if (erreur) {
+              console.log(erreur);
+              return res.status(500).send();
+            }
+
+            res.status(204).send();
+          },
+        );
       },
     );
 

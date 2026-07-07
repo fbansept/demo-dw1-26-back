@@ -13,7 +13,7 @@ function imageOwnerInterceptor(req, res, next) {
 
   //on verifie que l'utilisateur "connecté" est bien le proprietaire de la catégorie qui contien l'image
   connection.query(
-    ` SELECT c.user_id 
+    ` SELECT c.user_id, i.categorie_id
       FROM image i
       JOIN categorie c ON c.id = i.categorie_id
       WHERE i.id = ?
@@ -21,6 +21,7 @@ function imageOwnerInterceptor(req, res, next) {
     [idImage],
     (erreur, resultat) => {
       if (erreur) {
+        console.log(erreur)
         return res.status(500).send();
       }
 
@@ -35,6 +36,7 @@ function imageOwnerInterceptor(req, res, next) {
       }
 
       req.idImage = idImage;
+      req.idCategorie = resultat[0].categorie_id;
 
       next();
     },
